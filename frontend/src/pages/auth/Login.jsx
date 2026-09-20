@@ -88,30 +88,7 @@ export default function Login() {
         )}
 
         {/* Demo Fill Chips */}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 18 }}>
-          <button
-            type="button"
-            onClick={() => fillDemo('donor')}
-            style={{
-              fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 20,
-              background: '#fef2f2', border: '1px dashed #fca5a5', color: '#dc2626', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4
-            }}
-          >
-            <Sparkles size={11} /> Donor Demo
-          </button>
-          <button
-            type="button"
-            onClick={() => fillDemo('receiver')}
-            style={{
-              fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 20,
-              background: '#eff6ff', border: '1px dashed #93c5fd', color: '#2563eb', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4
-            }}
-          >
-            <Sparkles size={11} /> Receiver Demo
-          </button>
-        </div>
+        
 
         {error && <div className="auth-error">⚠️ {error}</div>}
 
