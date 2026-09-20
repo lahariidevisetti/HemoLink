@@ -1,12 +1,13 @@
 // src/components/common/ProtectedRoute.jsx
 // Guards routes — redirects to /login if not authenticated
-// Redirects to correct dashboard based on role
+// Enforces strict, compulsory profile completion before accessing platform
 
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import ExtraDetailsModal from './ExtraDetailsModal';
 
 export default function ProtectedRoute({ allowedRole }) {
-  const { isAuthenticated, user, loading } = useAuth();
+  const { isAuthenticated, user, loading, profileComplete } = useAuth();
 
   if (loading) {
     return (
@@ -27,5 +28,10 @@ export default function ProtectedRoute({ allowedRole }) {
     return <Navigate to={redirect} replace />;
   }
 
-  return <Outlet />;
+  return (
+    <>
+      {!profileComplete && <ExtraDetailsModal isStrict={true} />}
+      <Outlet />
+    </>
+  );
 }

@@ -1,9 +1,12 @@
 // middleware/auth.middleware.js
 // Verifies JWT token on every protected route
+// Automatically upgrades legacy numeric MySQL IDs to MongoDB ObjectIds
 
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+const { User } = require('../models');
 
-function verifyToken(req, res, next) {
+async function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -15,6 +18,21 @@ function verifyToken(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; // { id, email, role, profileComplete }
+
+    // If token has legacy numeric ID from MySQL, resolve to MongoDB ObjectId seamlessly
+    if (decoded.id && !mongoose.Types.ObjectId.isValid(decoded.id)) {
+      const user = await User.findOne({
+        $or: [
+          { legacy_id: Number(decoded.id) || -1 },
+          { email: decoded.email?.toLowerCase() },
+        ],
+      }).select('_id');
+
+      if (user) {
+        req.user.id = user._id.toString();
+      }
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ message: 'Invalid or expired token. Please log in again.' });
