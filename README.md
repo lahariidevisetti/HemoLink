@@ -6,6 +6,7 @@ It is built with a React frontend, an Express + MySQL backend, JWT-based authent
 
 ## Overview
 
+
 HemoLink helps bridge the gap between urgent blood needs and available donors by providing:
 
 - Role-based accounts for donors and receivers
