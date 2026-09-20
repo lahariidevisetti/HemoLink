@@ -1,0 +1,217 @@
+/* src/components/ui/UI.css — Shadcn-inspired UI Component System & Animations */
+
+/* ── Floating Toasts ── */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+.toast-item {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  min-width: 300px;
+  max-width: 420px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.05);
+  border: 1px solid #f3f4f6;
+  animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s ease;
+}
+
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(40px) scale(0.95); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.toast-success { border-left: 4px solid #16a34a; }
+.toast-error   { border-left: 4px solid #dc2626; }
+.toast-blood   { border-left: 4px solid #dc2626; background: #fff5f5; }
+.toast-info    { border-left: 4px solid #2563eb; }
+
+.toast-icon { flex-shrink: 0; margin-top: 1px; }
+.toast-content { flex: 1; }
+.toast-title { font-size: 13px; font-weight: 700; color: #111827; margin: 0 0 2px; }
+.toast-message { font-size: 12px; color: #4b5563; margin: 0; line-height: 1.4; }
+.toast-close {
+  background: none; border: none; color: #9ca3af; cursor: pointer;
+  padding: 2px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+}
+.toast-close:hover { color: #111827; background: #f3f4f6; }
+
+/* ── Badges ── */
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  letter-spacing: 0.3px;
+  transition: all 0.2s ease;
+}
+
+.ui-badge--default { background: #f3f4f6; color: #374151; }
+.ui-badge--primary { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+.ui-badge--success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.ui-badge--warning { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.ui-badge--danger  { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.ui-badge--outline { background: transparent; border: 1px solid #d1d5db; color: #4b5563; }
+.ui-badge--glow {
+  background: #fef2f2; color: #dc2626;
+  border: 1px solid #fca5a5;
+  box-shadow: 0 0 10px rgba(220, 38, 38, 0.2);
+}
+
+/* Pulsing beacon dot */
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  position: relative;
+}
+.pulse-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  animation: beaconPulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.pulse-dot--red  { background: #dc2626; }
+.pulse-dot--red::after { border: 2px solid #dc2626; }
+.pulse-dot--green{ background: #16a34a; }
+.pulse-dot--green::after { border: 2px solid #16a34a; }
+
+@keyframes beaconPulse {
+  0%   { transform: scale(0.9); opacity: 0.9; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ── Buttons ── */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 10px 18px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.ui-btn:active { transform: scale(0.98); }
+.ui-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
+
+.ui-btn--primary {
+  background: linear-gradient(135deg, #b91c1c, #dc2626);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+.ui-btn--primary:hover:not(:disabled) {
+  opacity: 0.95;
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.4);
+  transform: translateY(-1px);
+}
+
+.ui-btn--secondary {
+  background: #f3f4f6;
+  color: #374151;
+}
+.ui-btn--secondary:hover:not(:disabled) { background: #e5e7eb; color: #111827; }
+
+.ui-btn--outline {
+  background: transparent;
+  color: #374151;
+  border: 1.5px solid #e5e7eb;
+}
+.ui-btn--outline:hover:not(:disabled) {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.ui-btn--ghost {
+  background: transparent;
+  color: #4b5563;
+}
+.ui-btn--ghost:hover:not(:disabled) { background: #f3f4f6; color: #111827; }
+
+/* ── Card ── */
+.ui-card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #f3f4f6;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  padding: 24px;
+  transition: all 0.25s ease;
+}
+.ui-card--hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07);
+  border-color: #fee2e2;
+}
+
+/* ── Skeleton Shimmer ── */
+.ui-skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Interactive Quote Banner ── */
+.inspiring-banner {
+  background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%);
+  border: 1px solid #fecdd3;
+  border-radius: 16px;
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.inspiring-banner::after {
+  content: '🩸';
+  position: absolute;
+  right: -10px;
+  bottom: -20px;
+  font-size: 80px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.inspiring-quote {
+  font-size: 14px;
+  font-weight: 700;
+  color: #9f1239;
+  margin: 0 0 4px;
+  line-height: 1.4;
+}
+.inspiring-sub {
+  font-size: 12px;
+  color: #be123c;
+  margin: 0;
+}

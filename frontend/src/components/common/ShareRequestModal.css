@@ -1,0 +1,224 @@
+/* src/components/common/ShareRequestModal.css */
+.srm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+  animation: srmFadeIn 0.2s ease-out;
+}
+
+@keyframes srmFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.srm-card {
+  background: #ffffff;
+  width: 100%;
+  max-width: 480px;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.25), 0 0 1px 1px rgba(0,0,0,0.05);
+  overflow: hidden;
+  animation: srmScaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes srmScaleUp {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.srm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f1f5f9;
+  background: linear-gradient(180deg, #fff 0%, #fafafa 100%);
+}
+
+.srm-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.srm-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  transition: all 0.15s;
+}
+
+.srm-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.srm-body {
+  padding: 24px;
+}
+
+.srm-preview {
+  background: #fef2f2;
+  border: 1.5px solid #fecaca;
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.srm-blood-badge {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 900;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
+}
+
+.srm-preview-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.srm-preview-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #991b1b;
+  margin: 0 0 4px;
+}
+
+.srm-preview-meta {
+  font-size: 12px;
+  color: #7f1d1d;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Copy Link Section */
+.srm-copy-box {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.srm-copy-input {
+  flex: 1;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #334155;
+  font-family: monospace;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srm-copy-btn {
+  background: #1e293b;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.srm-copy-btn:hover {
+  background: #0f172a;
+}
+
+.srm-copy-btn--copied {
+  background: #16a34a !important;
+}
+
+/* Social Buttons Grid */
+.srm-social-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.srm-share-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.srm-share-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.srm-btn-whatsapp {
+  background: #25d366;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(37, 211, 102, 0.25);
+  grid-column: span 2;
+}
+
+.srm-btn-twitter {
+  background: #000000;
+  color: #ffffff;
+}
+
+.srm-btn-telegram {
+  background: #229ed9;
+  color: #ffffff;
+}
+
+.srm-btn-native {
+  grid-column: span 2;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
+.srm-footer-note {
+  margin-top: 18px;
+  font-size: 12px;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.4;
+}

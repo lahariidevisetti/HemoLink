@@ -1,0 +1,259 @@
+/* src/components/donor/DonorLayout.css */
+*, *::before, *::after { box-sizing: border-box; }
+
+.dl-shell {
+  display: flex;
+  min-height: 100vh;
+  background: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ── Sidebar with Elegant Rounded Corners ── */
+.dl-sidebar {
+  width: 256px;
+  background: linear-gradient(180deg, #150002 0%, #1c0205 45%, #120002 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 0 16px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  border-top-right-radius: 28px;
+  border-bottom-right-radius: 28px;
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.28), 2px 0 12px rgba(220, 38, 38, 0.08);
+  border-right: 1.5px solid rgba(239, 68, 68, 0.22);
+  z-index: 50;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dl-brand {
+  padding: 0 20px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  margin-bottom: 16px;
+}
+
+.dl-logo {
+  font-size: 21px;
+  font-weight: 900;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.3px;
+}
+
+.dl-logo-accent {
+  color: #f87171;
+}
+
+.dl-role-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #fca5a5;
+  background: rgba(220, 38, 38, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 2px 9px;
+  border-radius: 999px;
+  margin-top: 6px;
+}
+
+.dl-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 14px;
+}
+
+.dl-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  color: #d1d5db;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.dl-link:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  transform: translateX(3px);
+}
+
+.dl-link--active {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 55%, #b91c1c 100%) !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.42);
+  transform: none !important;
+}
+
+.dl-link-icon {
+  font-size: 17px;
+  width: 22px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* User Card with Sleek Rounded Pill Design */
+.dl-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 14px 4px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  transition: all 0.2s ease;
+}
+
+.dl-user:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.dl-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+}
+
+.dl-user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.dl-user-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl-user-email {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 1px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl-logout {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.dl-logout:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.45);
+  transform: scale(1.05);
+}
+
+.dl-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dl-topbar {
+  display: none;
+  background: #150002;
+  color: #fff;
+  padding: 14px 18px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.dl-hamburger {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.dl-topbar-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: #f87171;
+  margin: 0;
+}
+
+.dl-page {
+  padding: 28px 32px;
+  flex: 1;
+  max-width: 1200px;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .dl-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    height: 100vh;
+    border-radius: 0 28px 28px 0;
+  }
+  .dl-sidebar--open {
+    transform: translateX(0);
+  }
+  .dl-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    z-index: 99;
+  }
+  .dl-topbar {
+    display: flex;
+  }
+  .dl-page {
+    padding: 20px 16px;
+  }
+}
