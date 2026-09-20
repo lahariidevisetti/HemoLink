@@ -1,5 +1,19 @@
-const { pool } = require('../config/db');
+// controllers/donor.controller.js
+// Handles donor profiles, blood requests feed, donation responses, history using Mongoose
+
+const mongoose = require('mongoose');
+const {
+  User,
+  DonorProfile,
+  ReceiverProfile,
+  BloodRequest,
+  DonorResponse,
+  Notification,
+  buildIdQuery,
+} = require('../models');
 const { sendDonorResponseAlert } = require('../services/email.service');
+
+const urgencyOrder = { Critical: 1, High: 2, Medium: 3, Low: 4 };
 
 // ════════════════════════════════════════════════════════════
 // POST /api/donor/profile  — Create donor extra details
@@ -10,10 +24,8 @@ exports.createProfile = async (req, res) => {
     const userId = req.user.id;
 
     // Check if already exists
-    const [existing] = await pool.query(
-      'SELECT id FROM donor_profiles WHERE user_id = ?', [userId]
-    );
-    if (existing.length > 0) {
+    const existing = await DonorProfile.findOne({ user_id: userId });
+    if (existing) {
       return res.status(409).json({ message: 'Donor profile already exists. Use PUT to update.' });
     }
 
@@ -29,23 +41,26 @@ exports.createProfile = async (req, res) => {
       return res.status(400).json({ message: 'Missing required donor profile fields.' });
     }
 
-    await pool.query(
-      `INSERT INTO donor_profiles
-        (user_id, blood_group, date_of_birth, gender, weight_kg, phone,
-         house_no, street, city, state, pincode, last_donation_date,
-         is_first_time, has_chronic_illness, on_medication, tattoo_recent,
-         is_available, total_donations)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)`,
-      [
-        userId, blood_group, date_of_birth, gender, weight_kg, phone,
-        house_no || null, street || null, city, state, pincode,
-        last_donation_date || null,
-        is_first_time    ? 1 : 0,
-        has_chronic_illness ? 1 : 0,
-        on_medication    ? 1 : 0,
-        tattoo_recent    ? 1 : 0,
-      ]
-    );
+    await DonorProfile.create({
+      user_id:             userId,
+      blood_group,
+      date_of_birth,
+      gender,
+      weight_kg:           Number(weight_kg),
+      phone,
+      house_no:            house_no || null,
+      street:              street || null,
+      city,
+      state,
+      pincode,
+      last_donation_date:  last_donation_date || null,
+      is_first_time:       is_first_time !== undefined ? Boolean(is_first_time) : true,
+      has_chronic_illness: Boolean(has_chronic_illness),
+      on_medication:       Boolean(on_medication),
+      tattoo_recent:       Boolean(tattoo_recent),
+      is_available:        true,
+      total_donations:     0,
+    });
 
     return res.status(201).json({ message: 'Donor profile created successfully!' });
   } catch (err) {
@@ -61,19 +76,20 @@ exports.getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [rows] = await pool.query(
-      `SELECT u.full_name, u.email, dp.*
-       FROM donor_profiles dp
-       JOIN users u ON u.id = dp.user_id
-       WHERE dp.user_id = ?`,
-      [userId]
-    );
+    const user = await User.findById(userId).select('full_name email');
+    const profile = await DonorProfile.findOne({ user_id: userId });
 
-    if (rows.length === 0) {
+    if (!profile) {
       return res.status(404).json({ message: 'Donor profile not found.', profileComplete: false });
     }
 
-    return res.status(200).json({ profile: rows[0] });
+    const profileData = {
+      ...profile.toObject(),
+      full_name: user ? user.full_name : '',
+      email:     user ? user.email : '',
+    };
+
+    return res.status(200).json({ profile: profileData });
   } catch (err) {
     console.error('getDonorProfile error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -86,45 +102,28 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const fields = req.body;
 
-    const {
-      blood_group, date_of_birth, gender, weight_kg, phone,
-      house_no, street, city, state, pincode,
-      last_donation_date, is_first_time, has_chronic_illness,
-      on_medication, tattoo_recent,
-    } = req.body;
+    const updateData = {};
+    const allowed = [
+      'blood_group', 'date_of_birth', 'gender', 'weight_kg', 'phone',
+      'house_no', 'street', 'city', 'state', 'pincode', 'last_donation_date',
+      'is_first_time', 'has_chronic_illness', 'on_medication', 'tattoo_recent',
+    ];
 
-    const [result] = await pool.query(
-      `UPDATE donor_profiles SET
-        blood_group         = COALESCE(?, blood_group),
-        date_of_birth       = COALESCE(?, date_of_birth),
-        gender              = COALESCE(?, gender),
-        weight_kg           = COALESCE(?, weight_kg),
-        phone               = COALESCE(?, phone),
-        house_no            = COALESCE(?, house_no),
-        street              = COALESCE(?, street),
-        city                = COALESCE(?, city),
-        state               = COALESCE(?, state),
-        pincode             = COALESCE(?, pincode),
-        last_donation_date  = COALESCE(?, last_donation_date),
-        is_first_time       = COALESCE(?, is_first_time),
-        has_chronic_illness = COALESCE(?, has_chronic_illness),
-        on_medication       = COALESCE(?, on_medication),
-        tattoo_recent       = COALESCE(?, tattoo_recent)
-       WHERE user_id = ?`,
-      [
-        blood_group, date_of_birth, gender, weight_kg, phone,
-        house_no, street, city, state, pincode,
-        last_donation_date,
-        is_first_time !== undefined ? (is_first_time ? 1 : 0) : null,
-        has_chronic_illness !== undefined ? (has_chronic_illness ? 1 : 0) : null,
-        on_medication !== undefined ? (on_medication ? 1 : 0) : null,
-        tattoo_recent !== undefined ? (tattoo_recent ? 1 : 0) : null,
-        userId,
-      ]
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        updateData[key] = fields[key];
+      }
+    }
+
+    const updated = await DonorProfile.findOneAndUpdate(
+      { user_id: userId },
+      { $set: updateData },
+      { new: true }
     );
 
-    if (result.affectedRows === 0) {
+    if (!updated) {
       return res.status(404).json({ message: 'Donor profile not found.' });
     }
 
@@ -141,8 +140,10 @@ exports.updateProfile = async (req, res) => {
 exports.deleteProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    // CASCADE in DB handles donor_profiles deletion
-    await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+    await User.findByIdAndDelete(userId);
+    await DonorProfile.deleteMany({ user_id: userId });
+    await DonorResponse.deleteMany({ donor_id: userId });
+    await Notification.deleteMany({ user_id: userId });
     return res.status(200).json({ message: 'Account deleted.' });
   } catch (err) {
     console.error('deleteDonorProfile error:', err);
@@ -158,30 +159,54 @@ exports.getBloodRequests = async (req, res) => {
   try {
     const { blood_group, city, urgency } = req.query;
 
-    let query = `
-      SELECT
-        br.id, br.blood_group, br.hospital_name, br.city,
-        br.urgency, br.units_needed, br.additional_note,
-        br.document_url,
-        br.status, br.created_at,
-        u.full_name AS receiver_name,
-        rp.phone   AS receiver_phone
-      FROM blood_requests br
-      JOIN users u  ON u.id  = br.receiver_id
-      JOIN receiver_profiles rp ON rp.user_id = br.receiver_id
-      WHERE br.status = 'Open'
-    `;
-    const params = [];
+    const filter = { status: 'Open' };
+    if (blood_group) filter.blood_group = blood_group;
+    if (city)        filter.city = new RegExp(city, 'i');
+    if (urgency)     filter.urgency = urgency;
 
-    if (blood_group) { query += ' AND br.blood_group = ?'; params.push(blood_group); }
-    if (city)        { query += ' AND br.city LIKE ?';     params.push(`%${city}%`); }
-    if (urgency)     { query += ' AND br.urgency = ?';     params.push(urgency); }
+    const requests = await BloodRequest.find(filter)
+      .populate('receiver_id', 'full_name')
+      .sort({ createdAt: -1 })
+      .lean();
 
-    query += ' ORDER BY FIELD(br.urgency,"Critical","High","Medium","Low"), br.created_at DESC';
+    // Fetch receiver phones from receiver_profiles
+    const receiverIds = requests.map(r => r.receiver_id?._id || r.receiver_id).filter(Boolean);
+    const receiverProfiles = await ReceiverProfile.find({ user_id: { $in: receiverIds } })
+      .select('user_id phone')
+      .lean();
 
-    const [rows] = await pool.query(query, params);
+    const phoneMap = {};
+    for (const rp of receiverProfiles) {
+      phoneMap[rp.user_id.toString()] = rp.phone;
+    }
 
-    return res.status(200).json({ requests: rows, total: rows.length });
+    const formattedRequests = requests.map(br => {
+      const recId = br.receiver_id?._id ? br.receiver_id._id.toString() : br.receiver_id?.toString();
+      return {
+        id:              br._id.toString(),
+        blood_group:     br.blood_group,
+        hospital_name:   br.hospital_name,
+        city:            br.city,
+        urgency:         br.urgency,
+        units_needed:    br.units_needed,
+        additional_note: br.additional_note,
+        document_url:    br.document_url,
+        status:          br.status,
+        created_at:      br.createdAt,
+        receiver_name:   br.receiver_id?.full_name || 'Receiver',
+        receiver_phone:  phoneMap[recId] || '',
+      };
+    });
+
+    // Sort by urgency priority (Critical -> High -> Medium -> Low)
+    formattedRequests.sort((a, b) => {
+      const uA = urgencyOrder[a.urgency] || 99;
+      const uB = urgencyOrder[b.urgency] || 99;
+      if (uA !== uB) return uA - uB;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    return res.status(200).json({ requests: formattedRequests, total: formattedRequests.length });
   } catch (err) {
     console.error('getBloodRequests error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -194,27 +219,35 @@ exports.getBloodRequests = async (req, res) => {
 exports.getSingleBloodRequest = async (req, res) => {
   try {
     const { id } = req.params;
+    const query = buildIdQuery(id);
 
-    const [rows] = await pool.query(
-      `SELECT
-        br.id, br.blood_group, br.hospital_name, br.city,
-        br.urgency, br.units_needed, br.additional_note,
-        br.document_url,
-        br.status, br.created_at,
-        u.full_name AS receiver_name,
-        rp.phone   AS receiver_phone
-      FROM blood_requests br
-      JOIN users u  ON u.id  = br.receiver_id
-      JOIN receiver_profiles rp ON rp.user_id = br.receiver_id
-      WHERE br.id = ?`,
-      [id]
-    );
+    const br = await BloodRequest.findOne(query)
+      .populate('receiver_id', 'full_name')
+      .lean();
 
-    if (rows.length === 0) {
+    if (!br) {
       return res.status(404).json({ message: 'Blood request not found.' });
     }
 
-    return res.status(200).json({ request: rows[0] });
+    const recId = br.receiver_id?._id ? br.receiver_id._id.toString() : br.receiver_id?.toString();
+    const rp = await ReceiverProfile.findOne({ user_id: recId }).select('phone').lean();
+
+    const requestData = {
+      id:              br._id.toString(),
+      blood_group:     br.blood_group,
+      hospital_name:   br.hospital_name,
+      city:            br.city,
+      urgency:         br.urgency,
+      units_needed:    br.units_needed,
+      additional_note: br.additional_note,
+      document_url:    br.document_url,
+      status:          br.status,
+      created_at:      br.createdAt,
+      receiver_name:   br.receiver_id?.full_name || 'Receiver',
+      receiver_phone:  rp?.phone || '',
+    };
+
+    return res.status(200).json({ request: requestData });
   } catch (err) {
     console.error('getSingleBloodRequest error:', err);
     return res.status(500).json({ message: 'Server error retrieving request details.' });
@@ -231,53 +264,48 @@ exports.respondToRequest = async (req, res) => {
     const { message } = req.body;
 
     // Check request exists and is open
-    const [reqRows] = await pool.query(
-      'SELECT id, status FROM blood_requests WHERE id = ?', [requestId]
-    );
-    if (reqRows.length === 0) return res.status(404).json({ message: 'Request not found.' });
-    if (reqRows[0].status !== 'Open') return res.status(400).json({ message: 'This request is no longer open.' });
+    const reqDoc = await BloodRequest.findOne(buildIdQuery(requestId));
+    if (!reqDoc) return res.status(404).json({ message: 'Request not found.' });
+    if (reqDoc.status !== 'Open') return res.status(400).json({ message: 'This request is no longer open.' });
 
-    // Check already responded
-    const [existing] = await pool.query(
-      'SELECT id FROM donor_responses WHERE request_id = ? AND donor_id = ?',
-      [requestId, donorId]
-    );
-    if (existing.length > 0) return res.status(409).json({ message: 'You already responded to this request.' });
+    // Check if already responded
+    const existing = await DonorResponse.findOne({
+      request_id: reqDoc._id,
+      donor_id:   donorId,
+    });
+    if (existing) return res.status(409).json({ message: 'You already responded to this request.' });
 
-    await pool.query(
-      'INSERT INTO donor_responses (request_id, donor_id, message) VALUES (?, ?, ?)',
-      [requestId, donorId, message || null]
-    );
+    await DonorResponse.create({
+      request_id:   reqDoc._id,
+      donor_id:     donorId,
+      message:      message || null,
+      status:       'Pending',
+      responded_at: new Date(),
+    });
 
     // Create notification for receiver
-    const [reqDetails] = await pool.query(
-      'SELECT receiver_id, hospital_name, city FROM blood_requests WHERE id = ?', [requestId]
-    );
-    const [donorUser] = await pool.query('SELECT full_name, email FROM users WHERE id = ?', [donorId]);
-    const [donorProfile] = await pool.query('SELECT phone, blood_group FROM donor_profiles WHERE user_id = ?', [donorId]);
-    const [receiverUser] = await pool.query('SELECT full_name, email FROM users WHERE id = ?', [reqDetails[0]?.receiver_id]);
+    const donorUser = await User.findById(donorId).select('full_name email');
+    const donorProfile = await DonorProfile.findOne({ user_id: donorId }).select('phone blood_group');
+    const receiverUser = await User.findById(reqDoc.receiver_id).select('full_name email');
 
-    await pool.query(
-      `INSERT INTO notifications (user_id, title, message, type)
-       VALUES (?, ?, ?, 'response')`,
-      [
-        reqDetails[0].receiver_id,
-        'Donor responded to your request!',
-        `${donorUser[0].full_name} has offered to donate blood for your request.`,
-      ]
-    );
+    await Notification.create({
+      user_id: reqDoc.receiver_id,
+      title:   'Donor responded to your request!',
+      message: `${donorUser?.full_name || 'A donor'} has offered to donate blood for your request.`,
+      type:    'response',
+    });
 
-    // Trigger Real-Time Email Alert to receiver + admin email
+    // Trigger Real-Time Email Alert to receiver
     sendDonorResponseAlert({
-      receiverEmail: receiverUser[0]?.email,
-      receiverName: receiverUser[0]?.full_name,
-      donorName: donorUser[0]?.full_name,
-      donorEmail: donorUser[0]?.email,
-      donorPhone: donorProfile[0]?.phone,
-      donorBloodGroup: donorProfile[0]?.blood_group,
-      hospitalName: reqDetails[0]?.hospital_name,
-      city: reqDetails[0]?.city,
-      message: message,
+      receiverEmail:   receiverUser?.email,
+      receiverName:    receiverUser?.full_name,
+      donorName:       donorUser?.full_name,
+      donorEmail:      donorUser?.email,
+      donorPhone:      donorProfile?.phone,
+      donorBloodGroup: donorProfile?.blood_group,
+      hospitalName:    reqDoc.hospital_name,
+      city:            reqDoc.city,
+      message:         message,
     }).catch(err => console.error('Email alert dispatch error:', err));
 
     return res.status(201).json({ message: 'Response sent successfully! The receiver will be notified.' });
@@ -294,20 +322,30 @@ exports.getHistory = async (req, res) => {
   try {
     const donorId = req.user.id;
 
-    const [rows] = await pool.query(
-      `SELECT
-         dr.id, dr.status, dr.message, dr.responded_at,
-         br.blood_group, br.hospital_name, br.city, br.urgency,
-         u.full_name AS receiver_name
-       FROM donor_responses dr
-       JOIN blood_requests br ON br.id = dr.request_id
-       JOIN users u           ON u.id  = br.receiver_id
-       WHERE dr.donor_id = ?
-       ORDER BY dr.responded_at DESC`,
-      [donorId]
-    );
+    const responses = await DonorResponse.find({ donor_id: donorId })
+      .populate({
+        path: 'request_id',
+        populate: { path: 'receiver_id', select: 'full_name' },
+      })
+      .sort({ responded_at: -1 })
+      .lean();
 
-    return res.status(200).json({ history: rows, total: rows.length });
+    const history = responses.map(dr => {
+      const br = dr.request_id || {};
+      return {
+        id:            dr._id.toString(),
+        status:        dr.status,
+        message:       dr.message,
+        responded_at:  dr.responded_at,
+        blood_group:   br.blood_group || '',
+        hospital_name: br.hospital_name || '',
+        city:          br.city || '',
+        urgency:       br.urgency || '',
+        receiver_name: br.receiver_id?.full_name || 'Receiver',
+      };
+    });
+
+    return res.status(200).json({ history, total: history.length });
   } catch (err) {
     console.error('getHistory error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -323,14 +361,19 @@ exports.toggleAvailability = async (req, res) => {
     const userId = req.user.id;
     const { is_available } = req.body;
 
-    await pool.query(
-      'UPDATE donor_profiles SET is_available = ? WHERE user_id = ?',
-      [is_available ? 1 : 0, userId]
+    const updated = await DonorProfile.findOneAndUpdate(
+      { user_id: userId },
+      { $set: { is_available: Boolean(is_available) } },
+      { new: true }
     );
 
+    if (!updated) {
+      return res.status(404).json({ message: 'Donor profile not found.' });
+    }
+
     return res.status(200).json({
-      message:       `You are now ${is_available ? 'available' : 'unavailable'} for donation.`,
-      is_available:  is_available,
+      message:      `You are now ${is_available ? 'available' : 'unavailable'} for donation.`,
+      is_available: updated.is_available,
     });
   } catch (err) {
     console.error('toggleAvailability error:', err);

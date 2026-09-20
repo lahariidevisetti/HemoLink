@@ -1,19 +1,29 @@
-const { pool } = require('../config/db');
+// controllers/receiver.controller.js
+// Handles receiver profiles, blood request creation, matching donors, responses, notifications via Mongoose
+
+const mongoose = require('mongoose');
+const {
+  User,
+  DonorProfile,
+  ReceiverProfile,
+  BloodRequest,
+  DonorResponse,
+  Notification,
+  buildIdQuery,
+} = require('../models');
 const { sendBloodRequestAlert, sendDirectMessageToDonor } = require('../services/email.service');
 const { uploadDocument } = require('../services/cloudinary.service');
 const { getEligibleDonorGroups, getCompatibilityType } = require('../utils/bloodCompatibility');
 
 // ════════════════════════════════════════════════════════════
-// POST /api/receiver/profile  — Create extra details (after signup warning banner)
+// POST /api/receiver/profile  — Create extra details
 // ════════════════════════════════════════════════════════════
 exports.createProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [existing] = await pool.query(
-      'SELECT id FROM receiver_profiles WHERE user_id = ?', [userId]
-    );
-    if (existing.length > 0) {
+    const existing = await ReceiverProfile.findOne({ user_id: userId });
+    if (existing) {
       return res.status(409).json({ message: 'Receiver profile already exists. Use PUT to update.' });
     }
 
@@ -23,18 +33,15 @@ exports.createProfile = async (req, res) => {
       return res.status(400).json({ message: 'Blood group, phone, and city are required.' });
     }
 
-    await pool.query(
-      `INSERT INTO receiver_profiles
-         (user_id, blood_group, date_of_birth, gender, phone, city, address)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId, blood_group,
-        date_of_birth || null,
-        gender        || null,
-        phone, city,
-        address       || null,
-      ]
-    );
+    await ReceiverProfile.create({
+      user_id:       userId,
+      blood_group,
+      date_of_birth: date_of_birth || null,
+      gender:        gender || null,
+      phone,
+      city,
+      address:       address || null,
+    });
 
     return res.status(201).json({ message: 'Receiver profile created successfully!' });
   } catch (err) {
@@ -50,19 +57,20 @@ exports.getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [rows] = await pool.query(
-      `SELECT u.full_name, u.email, rp.*
-       FROM receiver_profiles rp
-       JOIN users u ON u.id = rp.user_id
-       WHERE rp.user_id = ?`,
-      [userId]
-    );
+    const user = await User.findById(userId).select('full_name email');
+    const profile = await ReceiverProfile.findOne({ user_id: userId });
 
-    if (rows.length === 0) {
+    if (!profile) {
       return res.status(404).json({ message: 'Profile not found.', profileComplete: false });
     }
 
-    return res.status(200).json({ profile: rows[0] });
+    const profileData = {
+      ...profile.toObject(),
+      full_name: user ? user.full_name : '',
+      email:     user ? user.email : '',
+    };
+
+    return res.status(200).json({ profile: profileData });
   } catch (err) {
     console.error('getReceiverProfile error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -77,19 +85,21 @@ exports.updateProfile = async (req, res) => {
     const userId = req.user.id;
     const { blood_group, date_of_birth, gender, phone, city, address } = req.body;
 
-    const [result] = await pool.query(
-      `UPDATE receiver_profiles SET
-         blood_group   = COALESCE(?, blood_group),
-         date_of_birth = COALESCE(?, date_of_birth),
-         gender        = COALESCE(?, gender),
-         phone         = COALESCE(?, phone),
-         city          = COALESCE(?, city),
-         address       = COALESCE(?, address)
-       WHERE user_id = ?`,
-      [blood_group, date_of_birth, gender, phone, city, address, userId]
+    const updateData = {};
+    if (blood_group !== undefined)   updateData.blood_group = blood_group;
+    if (date_of_birth !== undefined) updateData.date_of_birth = date_of_birth;
+    if (gender !== undefined)        updateData.gender = gender;
+    if (phone !== undefined)         updateData.phone = phone;
+    if (city !== undefined)          updateData.city = city;
+    if (address !== undefined)       updateData.address = address;
+
+    const updated = await ReceiverProfile.findOneAndUpdate(
+      { user_id: userId },
+      { $set: updateData },
+      { new: true }
     );
 
-    if (result.affectedRows === 0) {
+    if (!updated) {
       return res.status(404).json({ message: 'Receiver profile not found.' });
     }
 
@@ -105,7 +115,11 @@ exports.updateProfile = async (req, res) => {
 // ════════════════════════════════════════════════════════════
 exports.deleteProfile = async (req, res) => {
   try {
-    await pool.query('DELETE FROM users WHERE id = ?', [req.user.id]);
+    const userId = req.user.id;
+    await User.findByIdAndDelete(userId);
+    await ReceiverProfile.deleteMany({ user_id: userId });
+    await BloodRequest.deleteMany({ receiver_id: userId });
+    await Notification.deleteMany({ user_id: userId });
     return res.status(200).json({ message: 'Account deleted.' });
   } catch (err) {
     console.error('deleteReceiverProfile error:', err);
@@ -114,33 +128,38 @@ exports.deleteProfile = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// GET /api/receiver/donors  — Search available donors (real-time dashboard data)
+// GET /api/receiver/donors  — Search available donors
 // Query params: blood_group, city
 // ════════════════════════════════════════════════════════════
 exports.searchDonors = async (req, res) => {
   try {
     const { blood_group, city } = req.query;
 
-    let query = `
-      SELECT
-        u.id, u.full_name,
-        dp.blood_group, dp.city, dp.state,
-        dp.phone, dp.total_donations,
-        dp.last_donation_date, dp.is_available
-      FROM donor_profiles dp
-      JOIN users u ON u.id = dp.user_id
-      WHERE dp.is_available = 1
-    `;
-    const params = [];
+    const filter = { is_available: true };
+    if (blood_group) filter.blood_group = blood_group;
+    if (city)        filter.city = new RegExp(city, 'i');
 
-    if (blood_group) { query += ' AND dp.blood_group = ?';  params.push(blood_group); }
-    if (city)        { query += ' AND dp.city LIKE ?';       params.push(`%${city}%`); }
+    const profiles = await DonorProfile.find(filter)
+      .populate('user_id', 'full_name email role')
+      .sort({ total_donations: -1 })
+      .lean();
 
-    query += ' ORDER BY dp.total_donations DESC, u.full_name ASC';
+    const donors = profiles
+      .filter(dp => dp.user_id && dp.user_id.role === 'donor')
+      .map(dp => ({
+        id:                 dp.user_id._id.toString(),
+        full_name:          dp.user_id.full_name,
+        email:              dp.user_id.email,
+        blood_group:        dp.blood_group,
+        city:               dp.city,
+        state:              dp.state,
+        phone:              dp.phone,
+        total_donations:    dp.total_donations || 0,
+        last_donation_date: dp.last_donation_date,
+        is_available:       dp.is_available ? 1 : 0,
+      }));
 
-    const [rows] = await pool.query(query, params);
-
-    return res.status(200).json({ donors: rows, total: rows.length });
+    return res.status(200).json({ donors, total: donors.length });
   } catch (err) {
     console.error('searchDonors error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -159,39 +178,49 @@ exports.createRequest = async (req, res) => {
       return res.status(400).json({ message: 'Blood group, hospital, city, and urgency are required.' });
     }
 
-    const [result] = await pool.query(
-      `INSERT INTO blood_requests
-         (receiver_id, blood_group, hospital_name, city, urgency, units_needed, additional_note, document_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [receiverId, blood_group, hospital_name, city, urgency, units_needed || 1, additional_note || null, document_url || null]
-    );
+    const bloodReq = await BloodRequest.create({
+      receiver_id:     receiverId,
+      blood_group,
+      hospital_name:   hospital_name.trim(),
+      city:            city.trim(),
+      urgency,
+      units_needed:    Number(units_needed) || 1,
+      additional_note: additional_note || null,
+      document_url:    document_url || null,
+      status:          'Open',
+    });
 
-    // Query matching & compatible available donors with contact info
+    // Query matching & compatible available donors
     const eligibleGroups = getEligibleDonorGroups(blood_group);
-    const [matchingDonors] = await pool.query(
-      `SELECT dp.user_id, u.email, u.full_name, dp.blood_group
-       FROM donor_profiles dp
-       JOIN users u ON u.id = dp.user_id
-       WHERE dp.blood_group IN (?) AND dp.is_available = 1`,
-      [eligibleGroups]
-    );
+    const donorProfiles = await DonorProfile.find({
+      blood_group:  { $in: eligibleGroups },
+      is_available: true,
+    })
+      .populate('user_id', 'full_name email role')
+      .lean();
 
-    const [receiverUser] = await pool.query('SELECT full_name, email FROM users WHERE id = ?', [receiverId]);
-    const receiverName = receiverUser[0]?.full_name || 'Receiver';
+    const matchingDonors = donorProfiles
+      .filter(dp => dp.user_id && dp.user_id.role === 'donor')
+      .map(dp => ({
+        user_id:     dp.user_id._id.toString(),
+        email:       dp.user_id.email,
+        full_name:   dp.user_id.full_name,
+        blood_group: dp.blood_group,
+      }));
+
+    const receiverUser = await User.findById(receiverId).select('full_name email');
+    const receiverName = receiverUser?.full_name || 'Receiver';
 
     if (matchingDonors.length > 0) {
-      const notifValues = matchingDonors.map(d => [
-        d.user_id,
-        'New Emergency Blood Request!',
-        d.blood_group === blood_group
+      const notifs = matchingDonors.map(d => ({
+        user_id: d.user_id,
+        title:   'New Emergency Blood Request!',
+        message: d.blood_group === blood_group
           ? `${receiverName} needs ${blood_group} blood at ${hospital_name}, ${city}. Urgency: ${urgency}.`
           : `${receiverName} needs ${blood_group} blood at ${hospital_name}, ${city}. Your ${d.blood_group} blood is medically compatible! Urgency: ${urgency}.`,
-        'request',
-      ]);
-      await pool.query(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES ?',
-        [notifValues]
-      );
+        type:    'request',
+      }));
+      await Notification.insertMany(notifs);
     }
 
     // Trigger Real-Time Email Alert to each matching donor individually
@@ -204,24 +233,24 @@ exports.createRequest = async (req, res) => {
         : `Medical Compatibility: Patient needs ${blood_group}. Your ${donor.blood_group} blood is medically safe and compatible to donate.`;
 
       sendBloodRequestAlert({
-        bloodGroup: blood_group,
-        hospitalName: hospital_name,
-        city: city,
-        urgency: urgency,
-        unitsNeeded: units_needed,
+        bloodGroup:     blood_group,
+        hospitalName:   hospital_name,
+        city:           city,
+        urgency:        urgency,
+        unitsNeeded:    units_needed,
         additionalNote: compatNote
           ? (additional_note ? `${additional_note} · [${compatNote}]` : compatNote)
           : additional_note,
-        receiverName: receiverName,
+        receiverName:   receiverName,
         recipientEmail: donor.email.trim(),
-        documentUrl: document_url,
-        actionUrl: `${clientUrl}/request/${result.insertId}?donor_id=${donor.user_id}&action=review`,
+        documentUrl:    document_url,
+        actionUrl:      `${clientUrl}/request/${bloodReq._id.toString()}?donor_id=${donor.user_id}&action=review`,
       }).catch(err => console.error(`Email alert dispatch error for ${donor.email}:`, err.message));
     });
 
     return res.status(201).json({
       message:    'Blood request created! Matching donors have been notified.',
-      request_id: result.insertId,
+      request_id: bloodReq._id.toString(),
     });
   } catch (err) {
     console.error('createRequest error:', err);
@@ -236,21 +265,36 @@ exports.getMyRequests = async (req, res) => {
   try {
     const receiverId = req.user.id;
 
-    const [requests] = await pool.query(
-      `SELECT
-         br.id, br.blood_group, br.hospital_name, br.city,
-         br.urgency, br.units_needed, br.additional_note, br.document_url,
-         br.status, br.created_at,
-         COUNT(dr.id) AS response_count
-       FROM blood_requests br
-       LEFT JOIN donor_responses dr ON dr.request_id = br.id
-       WHERE br.receiver_id = ?
-       GROUP BY br.id
-       ORDER BY br.created_at DESC`,
-      [receiverId]
-    );
+    const requests = await BloodRequest.find({ receiver_id: receiverId })
+      .sort({ createdAt: -1 })
+      .lean();
 
-    return res.status(200).json({ requests, total: requests.length });
+    const requestIds = requests.map(r => r._id);
+    const responseCounts = await DonorResponse.aggregate([
+      { $match: { request_id: { $in: requestIds } } },
+      { $group: { _id: '$request_id', count: { $sum: 1 } } },
+    ]);
+
+    const countMap = {};
+    for (const item of responseCounts) {
+      countMap[item._id.toString()] = item.count;
+    }
+
+    const formattedRequests = requests.map(br => ({
+      id:              br._id.toString(),
+      blood_group:     br.blood_group,
+      hospital_name:   br.hospital_name,
+      city:            br.city,
+      urgency:         br.urgency,
+      units_needed:    br.units_needed,
+      additional_note: br.additional_note,
+      document_url:    br.document_url,
+      status:          br.status,
+      created_at:      br.createdAt,
+      response_count:  countMap[br._id.toString()] || 0,
+    }));
+
+    return res.status(200).json({ requests: formattedRequests, total: formattedRequests.length });
   } catch (err) {
     console.error('getMyRequests error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -258,34 +302,52 @@ exports.getMyRequests = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// GET /api/receiver/requests/:id/responses  — Donors who responded to a specific request
+// GET /api/receiver/requests/:id/responses  — Donors who responded to a request
 // ════════════════════════════════════════════════════════════
 exports.getRequestResponses = async (req, res) => {
   try {
     const receiverId = req.user.id;
     const requestId  = req.params.id;
 
-    // Verify this request belongs to this receiver
-    const [reqRows] = await pool.query(
-      'SELECT id FROM blood_requests WHERE id = ? AND receiver_id = ?',
-      [requestId, receiverId]
-    );
-    if (reqRows.length === 0) return res.status(404).json({ message: 'Request not found.' });
+    const bloodReq = await BloodRequest.findOne({
+      ...buildIdQuery(requestId),
+      receiver_id: receiverId,
+    });
 
-    const [responses] = await pool.query(
-      `SELECT
-         dr.id, dr.donor_id, dr.status, dr.message, dr.responded_at,
-         u.full_name AS donor_name, u.email AS donor_email,
-         dp.blood_group, dp.phone, dp.city, dp.total_donations
-       FROM donor_responses dr
-       JOIN users u         ON u.id  = dr.donor_id
-       JOIN donor_profiles dp ON dp.user_id = dr.donor_id
-       WHERE dr.request_id = ?
-       ORDER BY dr.responded_at DESC`,
-      [requestId]
-    );
+    if (!bloodReq) return res.status(404).json({ message: 'Request not found.' });
 
-    return res.status(200).json({ responses, total: responses.length });
+    const responses = await DonorResponse.find({ request_id: bloodReq._id })
+      .populate('donor_id', 'full_name email')
+      .sort({ responded_at: -1 })
+      .lean();
+
+    const donorUserIds = responses.map(r => r.donor_id?._id || r.donor_id).filter(Boolean);
+    const donorProfiles = await DonorProfile.find({ user_id: { $in: donorUserIds } }).lean();
+
+    const dpMap = {};
+    for (const dp of donorProfiles) {
+      dpMap[dp.user_id.toString()] = dp;
+    }
+
+    const formattedResponses = responses.map(dr => {
+      const dUserId = dr.donor_id?._id ? dr.donor_id._id.toString() : dr.donor_id?.toString();
+      const dp = dpMap[dUserId] || {};
+      return {
+        id:              dr._id.toString(),
+        donor_id:        dUserId,
+        status:          dr.status,
+        message:         dr.message,
+        responded_at:    dr.responded_at,
+        donor_name:      dr.donor_id?.full_name || 'Donor',
+        donor_email:     dr.donor_id?.email || '',
+        blood_group:     dp.blood_group || '',
+        phone:           dp.phone || '',
+        city:            dp.city || '',
+        total_donations: dp.total_donations || 0,
+      };
+    });
+
+    return res.status(200).json({ responses: formattedResponses, total: formattedResponses.length });
   } catch (err) {
     console.error('getRequestResponses error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -293,36 +355,66 @@ exports.getRequestResponses = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// GET /api/receiver/incoming-responses
-// All incoming donor responses across all requests of this receiver
+// GET /api/receiver/incoming-responses — Live deck across all requests
 // ════════════════════════════════════════════════════════════
 exports.getIncomingDonorResponses = async (req, res) => {
   try {
     const receiverId = req.user.id;
 
-    const [responses] = await pool.query(
-      `SELECT
-         dr.id, dr.request_id, dr.status, dr.message, dr.responded_at,
-         u.full_name AS donor_name, u.email AS donor_email,
-         dp.blood_group AS donor_blood_group, dp.phone AS donor_phone, dp.city AS donor_city, dp.total_donations,
-         br.hospital_name, br.city AS request_city, br.urgency, br.blood_group AS requested_blood_group
-       FROM donor_responses dr
-       JOIN blood_requests br ON br.id = dr.request_id
-       JOIN users u           ON u.id  = dr.donor_id
-       JOIN donor_profiles dp ON dp.user_id = dr.donor_id
-       WHERE br.receiver_id = ?
-       ORDER BY dr.responded_at DESC
-       LIMIT 10`,
-      [receiverId]
-    );
+    const myRequests = await BloodRequest.find({ receiver_id: receiverId })
+      .select('_id hospital_name city urgency blood_group')
+      .lean();
 
-    return res.status(200).json({ responses, total: responses.length });
+    const reqMap = {};
+    const reqIds = myRequests.map(r => {
+      reqMap[r._id.toString()] = r;
+      return r._id;
+    });
+
+    const responses = await DonorResponse.find({ request_id: { $in: reqIds } })
+      .populate('donor_id', 'full_name email')
+      .sort({ responded_at: -1 })
+      .limit(10)
+      .lean();
+
+    const donorUserIds = responses.map(r => r.donor_id?._id || r.donor_id).filter(Boolean);
+    const donorProfiles = await DonorProfile.find({ user_id: { $in: donorUserIds } }).lean();
+
+    const dpMap = {};
+    for (const dp of donorProfiles) {
+      dpMap[dp.user_id.toString()] = dp;
+    }
+
+    const formatted = responses.map(dr => {
+      const dUserId = dr.donor_id?._id ? dr.donor_id._id.toString() : dr.donor_id?.toString();
+      const dp = dpMap[dUserId] || {};
+      const br = reqMap[dr.request_id?.toString()] || {};
+
+      return {
+        id:                    dr._id.toString(),
+        request_id:            dr.request_id?.toString(),
+        status:                dr.status,
+        message:               dr.message,
+        responded_at:          dr.responded_at,
+        donor_name:            dr.donor_id?.full_name || 'Donor',
+        donor_email:           dr.donor_id?.email || '',
+        donor_blood_group:     dp.blood_group || '',
+        donor_phone:           dp.phone || '',
+        donor_city:            dp.city || '',
+        total_donations:       dp.total_donations || 0,
+        hospital_name:         br.hospital_name || '',
+        request_city:          br.city || '',
+        urgency:               br.urgency || '',
+        requested_blood_group: br.blood_group || '',
+      };
+    });
+
+    return res.status(200).json({ responses: formatted, total: formatted.length });
   } catch (err) {
     console.error('getIncomingDonorResponses error:', err);
     return res.status(500).json({ message: 'Server error.' });
   }
 };
-
 
 // ════════════════════════════════════════════════════════════
 // PUT /api/receiver/requests/:id  — Update a blood request
@@ -333,19 +425,21 @@ exports.updateRequest = async (req, res) => {
     const requestId  = req.params.id;
     const { hospital_name, city, urgency, units_needed, additional_note, status } = req.body;
 
-    const [result] = await pool.query(
-      `UPDATE blood_requests SET
-         hospital_name   = COALESCE(?, hospital_name),
-         city            = COALESCE(?, city),
-         urgency         = COALESCE(?, urgency),
-         units_needed    = COALESCE(?, units_needed),
-         additional_note = COALESCE(?, additional_note),
-         status          = COALESCE(?, status)
-       WHERE id = ? AND receiver_id = ?`,
-      [hospital_name, city, urgency, units_needed, additional_note, status, requestId, receiverId]
+    const updateData = {};
+    if (hospital_name !== undefined)   updateData.hospital_name = hospital_name;
+    if (city !== undefined)            updateData.city = city;
+    if (urgency !== undefined)         updateData.urgency = urgency;
+    if (units_needed !== undefined)    updateData.units_needed = units_needed;
+    if (additional_note !== undefined) updateData.additional_note = additional_note;
+    if (status !== undefined)          updateData.status = status;
+
+    const updated = await BloodRequest.findOneAndUpdate(
+      { ...buildIdQuery(requestId), receiver_id: receiverId },
+      { $set: updateData },
+      { new: true }
     );
 
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Request not found.' });
+    if (!updated) return res.status(404).json({ message: 'Request not found.' });
 
     return res.status(200).json({ message: 'Request updated.' });
   } catch (err) {
@@ -362,12 +456,14 @@ exports.deleteRequest = async (req, res) => {
     const receiverId = req.user.id;
     const requestId  = req.params.id;
 
-    const [result] = await pool.query(
-      'DELETE FROM blood_requests WHERE id = ? AND receiver_id = ?',
-      [requestId, receiverId]
-    );
+    const deleted = await BloodRequest.findOneAndDelete({
+      ...buildIdQuery(requestId),
+      receiver_id: receiverId,
+    });
 
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Request not found.' });
+    if (!deleted) return res.status(404).json({ message: 'Request not found.' });
+
+    await DonorResponse.deleteMany({ request_id: deleted._id });
 
     return res.status(200).json({ message: 'Blood request cancelled.' });
   } catch (err) {
@@ -383,17 +479,24 @@ exports.getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [rows] = await pool.query(
-      `SELECT id, title, message, type, is_read, created_at
-       FROM notifications WHERE user_id = ?
-       ORDER BY created_at DESC LIMIT 20`,
-      [userId]
-    );
+    const notifs = await Notification.find({ user_id: userId })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
 
     // Mark all as read
-    await pool.query('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [userId]);
+    await Notification.updateMany({ user_id: userId, is_read: false }, { is_read: true });
 
-    return res.status(200).json({ notifications: rows });
+    const formatted = notifs.map(n => ({
+      id:         n._id.toString(),
+      title:      n.title,
+      message:    n.message,
+      type:       n.type,
+      is_read:    n.is_read ? 1 : 0,
+      created_at: n.createdAt,
+    }));
+
+    return res.status(200).json({ notifications: formatted });
   } catch (err) {
     console.error('getNotifications error:', err);
     return res.status(500).json({ message: 'Server error.' });
@@ -401,7 +504,7 @@ exports.getNotifications = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// POST /api/receiver/requests/upload-doc — Upload Doctor/Operation Document
+// POST /api/receiver/requests/upload-doc — Upload Document
 // ════════════════════════════════════════════════════════════
 exports.uploadMedicalDocument = async (req, res) => {
   try {
@@ -418,8 +521,8 @@ exports.uploadMedicalDocument = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: 'Medical document uploaded successfully!',
-      url: result.url,
+      message:  'Medical document uploaded successfully!',
+      url:      result.url,
       provider: result.provider,
     });
   } catch (err) {
@@ -429,51 +532,82 @@ exports.uploadMedicalDocument = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// GET /api/receiver/requests/:id/matching-donors — Fetch matching & compatible donors
+// GET /api/receiver/requests/:id/matching-donors — Fetch compatible donors
 // ════════════════════════════════════════════════════════════
 exports.getMatchingDonors = async (req, res) => {
   try {
-    const requestId = req.params.id;
+    const requestId  = req.params.id;
     const receiverId = req.user.id;
 
-    const [reqRows] = await pool.query(
-      'SELECT id, blood_group, city, hospital_name, units_needed, urgency FROM blood_requests WHERE id = ? AND receiver_id = ?',
-      [requestId, receiverId]
-    );
+    const bloodReq = await BloodRequest.findOne({
+      ...buildIdQuery(requestId),
+      receiver_id: receiverId,
+    }).lean();
 
-    if (reqRows.length === 0) {
+    if (!bloodReq) {
       return res.status(404).json({ message: 'Blood request not found.' });
     }
 
-    const request = reqRows[0];
-    const eligibleGroups = getEligibleDonorGroups(request.blood_group);
+    const eligibleGroups = getEligibleDonorGroups(bloodReq.blood_group);
 
-    // Query registered active donors with matching OR compatible blood groups
-    const [donors] = await pool.query(
-      `SELECT
-         u.id, u.full_name, u.email,
-         dp.phone, dp.blood_group, dp.city, dp.state, dp.total_donations, dp.is_available,
-         (SELECT COUNT(*) FROM donor_responses WHERE request_id = ? AND donor_id = u.id) AS has_responded
-       FROM users u
-       JOIN donor_profiles dp ON dp.user_id = u.id
-       WHERE u.role = 'donor'
-         AND dp.blood_group IN (?)
-         AND dp.is_available = 1
-       ORDER BY (dp.blood_group = ?) DESC, (dp.city = ?) DESC, dp.total_donations DESC`,
-      [requestId, eligibleGroups, request.blood_group, request.city]
-    );
+    // Query active donors with matching OR compatible blood groups
+    const donorProfiles = await DonorProfile.find({
+      blood_group:  { $in: eligibleGroups },
+      is_available: true,
+    })
+      .populate('user_id', 'full_name email role')
+      .lean();
 
-    const enrichedDonors = donors.map(d => ({
-      ...d,
-      compatibilityType: getCompatibilityType(d.blood_group, request.blood_group),
-      isExactMatch: d.blood_group === request.blood_group,
-    }));
+    // Check which donors have already responded
+    const responses = await DonorResponse.find({ request_id: bloodReq._id }).select('donor_id').lean();
+    const respondedDonorSet = new Set(responses.map(r => r.donor_id.toString()));
+
+    const activeDonors = donorProfiles
+      .filter(dp => dp.user_id && dp.user_id.role === 'donor')
+      .map(dp => {
+        const uId = dp.user_id._id.toString();
+        return {
+          id:                uId,
+          full_name:         dp.user_id.full_name,
+          email:             dp.user_id.email,
+          phone:             dp.phone,
+          blood_group:       dp.blood_group,
+          city:              dp.city,
+          state:             dp.state,
+          total_donations:   dp.total_donations || 0,
+          is_available:      dp.is_available ? 1 : 0,
+          has_responded:     respondedDonorSet.has(uId) ? 1 : 0,
+          compatibilityType: getCompatibilityType(dp.blood_group, bloodReq.blood_group),
+          isExactMatch:      dp.blood_group === bloodReq.blood_group,
+        };
+      });
+
+    // Sort: Exact match first, then city match, then total_donations
+    activeDonors.sort((a, b) => {
+      if (a.isExactMatch !== b.isExactMatch) return b.isExactMatch ? 1 : -1;
+      const cityMatchA = a.city?.toLowerCase() === bloodReq.city?.toLowerCase();
+      const cityMatchB = b.city?.toLowerCase() === bloodReq.city?.toLowerCase();
+      if (cityMatchA !== cityMatchB) return cityMatchB ? 1 : -1;
+      return (b.total_donations || 0) - (a.total_donations || 0);
+    });
+
+    const requestFormatted = {
+      id:              bloodReq._id.toString(),
+      blood_group:     bloodReq.blood_group,
+      hospital_name:   bloodReq.hospital_name,
+      city:            bloodReq.city,
+      urgency:         bloodReq.urgency,
+      units_needed:    bloodReq.units_needed,
+      additional_note: bloodReq.additional_note,
+      document_url:    bloodReq.document_url,
+      status:          bloodReq.status,
+    };
 
     return res.status(200).json({
-      request,
+      request:        requestFormatted,
       eligibleGroups,
-      matchingDonors: enrichedDonors,
-      total: enrichedDonors.length,
+      matchingDonors: activeDonors,
+      total:          activeDonors.length,
     });
   } catch (err) {
     console.error('getMatchingDonors error:', err);
@@ -482,46 +616,51 @@ exports.getMatchingDonors = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// POST /api/receiver/requests/:id/broadcast-email — Send All emergency emails to compatible donors
+// POST /api/receiver/requests/:id/broadcast-email — Send All emergency emails
 // ════════════════════════════════════════════════════════════
 exports.broadcastEmailToMatchingDonors = async (req, res) => {
   try {
-    const requestId = req.params.id;
+    const requestId  = req.params.id;
     const receiverId = req.user.id;
     const { donor_ids } = req.body;
 
-    const [reqRows] = await pool.query(
-      `SELECT br.*, u.full_name AS requester_name, rp.phone AS requester_phone
-       FROM blood_requests br
-       JOIN users u ON u.id = br.receiver_id
-       LEFT JOIN receiver_profiles rp ON rp.user_id = u.id
-       WHERE br.id = ? AND br.receiver_id = ?`,
-      [requestId, receiverId]
-    );
+    const bloodReq = await BloodRequest.findOne({
+      ...buildIdQuery(requestId),
+      receiver_id: receiverId,
+    })
+      .populate('receiver_id', 'full_name')
+      .lean();
 
-    if (reqRows.length === 0) {
+    if (!bloodReq) {
       return res.status(404).json({ message: 'Blood request not found.' });
     }
 
-    const bloodReq = reqRows[0];
     const eligibleGroups = getEligibleDonorGroups(bloodReq.blood_group);
 
-    let donorQuery = `
-      SELECT u.id, u.full_name, u.email, dp.phone, dp.city, dp.blood_group
-      FROM users u
-      JOIN donor_profiles dp ON dp.user_id = u.id
-      WHERE u.role = 'donor'
-        AND dp.blood_group IN (?)
-        AND dp.is_available = 1
-    `;
-    const donorParams = [eligibleGroups];
+    const donorQuery = {
+      blood_group:  { $in: eligibleGroups },
+      is_available: true,
+    };
 
     if (Array.isArray(donor_ids) && donor_ids.length > 0) {
-      donorQuery += ' AND u.id IN (?)';
-      donorParams.push(donor_ids);
+      const validObjectIds = donor_ids.filter(id => mongoose.Types.ObjectId.isValid(id));
+      donorQuery.user_id = { $in: validObjectIds };
     }
 
-    const [donors] = await pool.query(donorQuery, donorParams);
+    const donorProfiles = await DonorProfile.find(donorQuery)
+      .populate('user_id', 'full_name email role')
+      .lean();
+
+    const donors = donorProfiles
+      .filter(dp => dp.user_id && dp.user_id.role === 'donor')
+      .map(dp => ({
+        id:          dp.user_id._id.toString(),
+        full_name:   dp.user_id.full_name,
+        email:       dp.user_id.email,
+        phone:       dp.phone,
+        city:        dp.city,
+        blood_group: dp.blood_group,
+      }));
 
     if (donors.length === 0) {
       return res.status(400).json({
@@ -530,8 +669,8 @@ exports.broadcastEmailToMatchingDonors = async (req, res) => {
     }
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const requesterName = bloodReq.receiver_id?.full_name || 'Requester';
 
-    // Dispatch emails to all matching and compatible donors asynchronously
     const emailPromises = donors.map(donor => {
       const isExact = donor.blood_group === bloodReq.blood_group;
       const compatNote = isExact
@@ -539,25 +678,25 @@ exports.broadcastEmailToMatchingDonors = async (req, res) => {
         : `Medical Compatibility: Patient needs ${bloodReq.blood_group}. Your ${donor.blood_group} blood is medically safe and compatible to donate.`;
 
       return sendBloodRequestAlert({
-        bloodGroup: bloodReq.blood_group,
-        hospitalName: bloodReq.hospital_name,
-        city: bloodReq.city,
-        urgency: bloodReq.urgency,
-        unitsNeeded: bloodReq.units_needed,
+        bloodGroup:     bloodReq.blood_group,
+        hospitalName:   bloodReq.hospital_name,
+        city:           bloodReq.city,
+        urgency:        bloodReq.urgency,
+        unitsNeeded:    bloodReq.units_needed,
         additionalNote: compatNote
           ? (bloodReq.additional_note ? `${bloodReq.additional_note} · [${compatNote}]` : compatNote)
           : bloodReq.additional_note,
-        receiverName: bloodReq.requester_name,
+        receiverName:   requesterName,
         recipientEmail: donor.email,
-        documentUrl: bloodReq.document_url,
-        actionUrl: `${clientUrl}/request/${bloodReq.id}?donor_id=${donor.id}&action=review`,
+        documentUrl:    bloodReq.document_url,
+        actionUrl:      `${clientUrl}/request/${bloodReq._id.toString()}?donor_id=${donor.id}&action=review`,
       }).catch(err => console.error(`Failed sending to ${donor.email}:`, err.message));
     });
 
     await Promise.all(emailPromises);
 
     return res.status(200).json({
-      message: `Emergency broadcast emails sent successfully to ${donors.length} compatible donor(s) (${eligibleGroups.join(', ')})!`,
+      message:    `Emergency broadcast emails sent successfully to ${donors.length} compatible donor(s) (${eligibleGroups.join(', ')})!`,
       sent_count: donors.length,
       eligibleGroups,
     });
@@ -568,7 +707,7 @@ exports.broadcastEmailToMatchingDonors = async (req, res) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// POST /api/receiver/requests/:id/email-donor — Send direct email to a responded donor
+// POST /api/receiver/requests/:id/email-donor — Send direct email to donor
 // ════════════════════════════════════════════════════════════
 exports.sendDirectEmailToDonor = async (req, res) => {
   try {
@@ -580,71 +719,54 @@ exports.sendDirectEmailToDonor = async (req, res) => {
       return res.status(400).json({ message: 'donor_id is required.' });
     }
 
-    // Verify request ownership
-    const [reqRows] = await pool.query(
-      `SELECT br.*, u.full_name AS requester_name, u.email AS requester_email, rp.phone AS requester_phone
-       FROM blood_requests br
-       JOIN users u ON u.id = br.receiver_id
-       LEFT JOIN receiver_profiles rp ON rp.user_id = u.id
-       WHERE br.id = ? AND br.receiver_id = ?`,
-      [requestId, receiverId]
-    );
+    const bloodReq = await BloodRequest.findOne({
+      ...buildIdQuery(requestId),
+      receiver_id: receiverId,
+    })
+      .populate('receiver_id', 'full_name email')
+      .lean();
 
-    if (reqRows.length === 0) {
+    if (!bloodReq) {
       return res.status(404).json({ message: 'Blood request not found.' });
     }
 
-    const bloodReq = reqRows[0];
+    const donorUser = await User.findById(donor_id).select('full_name email');
+    const donorProfile = await DonorProfile.findOne({ user_id: donor_id }).select('phone city blood_group');
 
-    // Get donor user info
-    const [donorRows] = await pool.query(
-      `SELECT u.id, u.full_name, u.email, dp.phone, dp.city, dp.blood_group
-       FROM users u
-       JOIN donor_profiles dp ON dp.user_id = u.id
-       WHERE u.id = ?`,
-      [donor_id]
-    );
-
-    if (donorRows.length === 0) {
+    if (!donorUser) {
       return res.status(404).json({ message: 'Donor not found.' });
     }
 
-    const donor = donorRows[0];
-
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const requesterName = bloodReq.receiver_id?.full_name || 'Requester';
+    const requesterEmail = bloodReq.receiver_id?.email || '';
 
-    // Send direct email via email service
     await sendDirectMessageToDonor({
-      donorName: donor.full_name,
-      donorEmail: donor.email,
-      requesterName: bloodReq.requester_name,
-      requesterEmail: bloodReq.requester_email,
-      hospitalName: bloodReq.hospital_name,
-      city: bloodReq.city,
-      bloodGroup: bloodReq.blood_group,
-      requestId: bloodReq.id,
-      actionUrl: `${clientUrl}/request/${bloodReq.id}?donor_id=${donor.id}&action=review`,
-      customMessage: customMessage || `Thank you for offering to donate blood for ${bloodReq.hospital_name}! Please coordinate with me directly.`,
+      donorName:      donorUser.full_name,
+      donorEmail:     donorUser.email,
+      requesterName:  requesterName,
+      requesterEmail: requesterEmail,
+      hospitalName:   bloodReq.hospital_name,
+      city:           bloodReq.city,
+      bloodGroup:     bloodReq.blood_group,
+      requestId:      bloodReq._id.toString(),
+      actionUrl:      `${clientUrl}/request/${bloodReq._id.toString()}?donor_id=${donorUser._id.toString()}&action=review`,
+      customMessage:  customMessage || `Thank you for offering to donate blood for ${bloodReq.hospital_name}! Please coordinate with me directly.`,
     });
 
-    // Also record in-app notification for the donor
-    await pool.query(
-      `INSERT INTO notifications (user_id, title, message, type)
-       VALUES (?, ?, ?, 'request')`,
-      [
-        donor.id,
-        `Direct Message from ${bloodReq.requester_name} 🩸`,
-        `${bloodReq.requester_name} sent you an emergency direct message regarding your donation offer for ${bloodReq.hospital_name}.`,
-      ]
-    );
+    await Notification.create({
+      user_id: donorUser._id,
+      title:   `Direct Message from ${requesterName} 🩸`,
+      message: `${requesterName} sent you an emergency direct message regarding your donation offer for ${bloodReq.hospital_name}.`,
+      type:    'request',
+    });
 
     return res.status(200).json({
       success: true,
-      message: `Direct email sent successfully to ${donor.full_name} (${donor.email})!`,
+      message: `Direct email sent successfully to ${donorUser.full_name} (${donorUser.email})!`,
     });
   } catch (err) {
     console.error('sendDirectEmailToDonor error:', err);
     return res.status(500).json({ message: 'Server error sending direct email: ' + err.message });
   }
 };
-

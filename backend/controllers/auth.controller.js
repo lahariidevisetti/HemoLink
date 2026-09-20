@@ -1,17 +1,16 @@
 // controllers/auth.controller.js
-// Handles signup, login, forgot-password, reset-password
+// Handles signup, login, forgot-password, reset-password using MongoDB Atlas & Mongoose
 
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
-const crypto = require('crypto');
-const { pool } = require('../config/db');
+const { User, DonorProfile, ReceiverProfile, PasswordReset } = require('../models');
 const { sendWelcomeEmail, sendPasswordResetEmail, sendBloodRequestAlert } = require('../services/email.service');
 
 // ─── Helper: generate JWT ────────────────────────────────────
 function generateToken(user, profileComplete) {
   return jwt.sign(
     {
-      id:              user.id,
+      id:              user._id ? user._id.toString() : user.id,
       email:           user.email,
       role:            user.role,
       profileComplete: profileComplete,
@@ -23,11 +22,18 @@ function generateToken(user, profileComplete) {
 
 // ─── Helper: check profile complete ─────────────────────────
 async function isProfileComplete(userId, role) {
-  const table = role === 'donor' ? 'donor_profiles' : 'receiver_profiles';
-  const [rows] = await pool.query(
-    `SELECT id FROM ${table} WHERE user_id = ?`, [userId]
-  );
-  return rows.length > 0;
+  try {
+    if (role === 'donor') {
+      const exists = await DonorProfile.exists({ user_id: userId });
+      return exists !== null;
+    } else {
+      const exists = await ReceiverProfile.exists({ user_id: userId });
+      return exists !== null;
+    }
+  } catch (err) {
+    console.error('isProfileComplete error:', err);
+    return false;
+  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -49,11 +55,11 @@ exports.signup = async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters.' });
     }
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     // Check if email already exists
-    const [existing] = await pool.query(
-      'SELECT id FROM users WHERE email = ?', [email.toLowerCase().trim()]
-    );
-    if (existing.length > 0) {
+    const existing = await User.findOne({ email: normalizedEmail });
+    if (existing) {
       return res.status(409).json({ message: 'An account with this email already exists.' });
     }
 
@@ -61,17 +67,13 @@ exports.signup = async (req, res) => {
     const salt          = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Insert user
-    const [result] = await pool.query(
-      'INSERT INTO users (full_name, email, password_hash, role) VALUES (?, ?, ?, ?)',
-      [full_name.trim(), email.toLowerCase().trim(), password_hash, role]
-    );
-
-    const newUser = {
-      id:    result.insertId,
-      email: email.toLowerCase().trim(),
-      role:  role,
-    };
+    // Create user
+    const newUser = await User.create({
+      full_name: full_name.trim(),
+      email: normalizedEmail,
+      password_hash,
+      role,
+    });
 
     const token = generateToken(newUser, false); // profileComplete = false on signup
 
@@ -83,11 +85,11 @@ exports.signup = async (req, res) => {
     }).catch(err => console.error('Welcome email error:', err));
 
     return res.status(201).json({
-      message:         'Account created successfully!',
+      message: 'Account created successfully!',
       token,
       user: {
-        id:              newUser.id,
-        full_name:       full_name.trim(),
+        id:              newUser._id.toString(),
+        full_name:       newUser.full_name,
         email:           newUser.email,
         role:            role,
         profileComplete: false,
@@ -111,16 +113,13 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required.' });
     }
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     // Find user
-    const [rows] = await pool.query(
-      'SELECT id, full_name, email, password_hash, role FROM users WHERE email = ?',
-      [email.toLowerCase().trim()]
-    );
-    if (rows.length === 0) {
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
-
-    const user = rows[0];
 
     // Compare password
     const isMatch = await bcrypt.compare(password, user.password_hash);
@@ -129,7 +128,7 @@ exports.login = async (req, res) => {
     }
 
     // Check if profile is complete
-    const profileComplete = await isProfileComplete(user.id, user.role);
+    const profileComplete = await isProfileComplete(user._id, user.role);
 
     const token = generateToken(user, profileComplete);
 
@@ -137,7 +136,7 @@ exports.login = async (req, res) => {
       message: 'Login successful!',
       token,
       user: {
-        id:              user.id,
+        id:              user._id.toString(),
         full_name:       user.full_name,
         email:           user.email,
         role:            user.role,
@@ -160,30 +159,29 @@ exports.forgotPassword = async (req, res) => {
     if (!email) return res.status(400).json({ message: 'Email is required.' });
 
     const normalizedEmail = email.toLowerCase().trim();
-    const [rows] = await pool.query(
-      'SELECT id, full_name FROM users WHERE email = ?', [normalizedEmail]
-    );
+    const user = await User.findOne({ email: normalizedEmail });
 
     // If email doesn't exist, return neutral message for security
-    if (rows.length === 0) {
+    if (!user) {
       return res.status(200).json({ message: 'If this email exists, a verification code has been sent.' });
     }
 
-    const userId   = rows[0].id;
-    const userName = rows[0].full_name;
+    const userId   = user._id;
+    const userName = user.full_name;
 
     // Invalidate any previously generated unused reset codes for this user
-    await pool.query('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0', [userId]);
+    await PasswordReset.updateMany({ user_id: userId, used: false }, { used: true });
 
     // Generate a secure 6-digit verification code (e.g. 749201)
     const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expires   = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiration
 
     // Save 6-digit code to DB
-    await pool.query(
-      'INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)',
-      [userId, resetCode, expires]
-    );
+    await PasswordReset.create({
+      user_id: userId,
+      token: resetCode,
+      expires_at: expires,
+    });
 
     // Send Real-Time Crimson Email Template with 6-digit code
     sendPasswordResetEmail({
@@ -196,7 +194,7 @@ exports.forgotPassword = async (req, res) => {
 
     return res.status(200).json({
       message:   'A 6-digit verification code has been sent to your email.',
-      resetCode: resetCode, // Available in response for instant local testing
+      resetCode: resetCode,
     });
   } catch (err) {
     console.error('Forgot password error:', err);
@@ -221,26 +219,26 @@ exports.resetPassword = async (req, res) => {
     }
 
     // Find valid active code
-    const [rows] = await pool.query(
-      `SELECT pr.id, pr.user_id FROM password_resets pr
-       WHERE pr.token = ? AND pr.expires_at > NOW() AND pr.used = 0`,
-      [verificationCode]
-    );
+    const resetRecord = await PasswordReset.findOne({
+      token: verificationCode,
+      expires_at: { $gt: new Date() },
+      used: false,
+    });
 
-    if (rows.length === 0) {
+    if (!resetRecord) {
       return res.status(400).json({ message: 'Invalid or expired verification code. Please request a new one.' });
     }
 
-    const resetRecordId = rows[0].id;
-    const userId        = rows[0].user_id;
+    const userId = resetRecord.user_id;
 
     // Hash new password
     const salt    = await bcrypt.genSalt(10);
     const newHash = await bcrypt.hash(newPassword, salt);
 
     // Update password + mark code as used
-    await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, userId]);
-    await pool.query('UPDATE password_resets SET used = 1 WHERE id = ?', [resetRecordId]);
+    await User.findByIdAndUpdate(userId, { password_hash: newHash });
+    resetRecord.used = true;
+    await resetRecord.save();
 
     console.log(`✅ Password successfully updated for user ID: ${userId}`);
 
@@ -256,17 +254,19 @@ exports.resetPassword = async (req, res) => {
 // ════════════════════════════════════════════════════════════
 exports.getMe = async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT id, full_name, email, role FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    if (rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+    const user = await User.findById(req.user.id).select('-password_hash');
+    if (!user) return res.status(404).json({ message: 'User not found.' });
 
-    const user            = rows[0];
-    const profileComplete = await isProfileComplete(user.id, user.role);
+    const profileComplete = await isProfileComplete(user._id, user.role);
 
     return res.status(200).json({
-      user: { ...user, profileComplete },
+      user: {
+        id:              user._id.toString(),
+        full_name:       user.full_name,
+        email:           user.email,
+        role:            user.role,
+        profileComplete,
+      },
     });
   } catch (err) {
     console.error('GetMe error:', err);
@@ -305,4 +305,3 @@ exports.testEmail = async (req, res) => {
     });
   }
 };
-

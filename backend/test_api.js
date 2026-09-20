@@ -1,8 +1,9 @@
 const http = require('http');
 const app = require('./server');
-const { pool } = require('./config/db');
+const { connectDB, mongoose } = require('./config/db');
 
 async function runTests() {
+  await connectDB();
   const server = http.createServer(app);
   await new Promise(res => server.listen(5001, res));
   console.log('Test server listening on port 5001');
@@ -108,7 +109,7 @@ async function runTests() {
     console.error('Test error:', err);
   } finally {
     server.close();
-    await pool.end();
+    await mongoose.disconnect();
     process.exit(0);
   }
 }
