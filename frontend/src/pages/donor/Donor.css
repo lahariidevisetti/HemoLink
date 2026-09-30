@@ -15,7 +15,7 @@
 .stat-card {
   display: flex; align-items: center; gap: 14px;
   background: #fff; border-radius: 14px; padding: 18px 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #f3f4f6;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 2px solid #d1d5db;
 }
 .stat-red    .stat-icon { background: #fef2f2; }
 .stat-blue   .stat-icon { background: #eff6ff; }
