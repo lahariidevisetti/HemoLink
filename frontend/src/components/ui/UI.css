@@ -158,7 +158,7 @@
 .ui-card {
   background: #ffffff;
   border-radius: 16px;
-  border: 1px solid #f3f4f6;
+  border: 3px solid #d1d5db;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
   padding: 24px;
   transition: all 0.25s ease;
