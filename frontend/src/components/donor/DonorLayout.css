@@ -48,9 +48,12 @@
 .dl-logo-accent {
   color: #f87171;
 }
-.rl-logo-img {
-  height: 32px;
-  border-radius: 6px;
+.dl-logo-img {
+  height: 24px;
+  width: auto;
+  max-width: 28px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .dl-role-badge {
