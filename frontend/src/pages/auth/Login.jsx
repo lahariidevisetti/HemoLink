@@ -74,7 +74,7 @@ export default function Login() {
         {/* Logo & Headline */}
         <div className="auth-logo-wrap">
           <img src="/helpblood.png" alt="HemoLink" className="auth-logo" onError={e => { e.target.style.display='none'; }} />
-          <h1 className="auth-brand">🩸 HemoLink</h1>
+          <h1 className="auth-brand"> HemoLink</h1>
         </div>
 
         <h2 className="auth-title">Welcome Back, Hero</h2>
