@@ -28,7 +28,7 @@ export default function DonorLayout({ children }) {
       <aside className={`dl-sidebar ${sidebarOpen ? 'dl-sidebar--open' : ''}`}>
         <div className="dl-brand">
           <div className="dl-logo">
-            <img src="/logo-icon.png" alt="HemoLink" className="rl-logo-img" />
+            <img src="/logo-icon.png" alt="HemoLink" className="dl-logo-img" />
             <span>Hemo<span className="dl-logo-accent">Link</span></span>
           </div>
           <span className="dl-role-badge">Donor</span>
