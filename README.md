@@ -47,8 +47,8 @@ HemoLink helps bridge the gap between urgent blood needs and available donors by
 ### System Services
 
 - JWT authentication with role-based access
-- MySQL database integration via mysql2
-- Nodemailer-based email alerts for signup, password reset, donor responses, and critical blood requests
+- MongoDB database integration via Mongoose
+- Brevo email alerts for signup, password reset, donor responses, and critical blood requests (via Transactional REST API v3)
 - Cloudinary-managed document storage with fallback to local uploads
 - Blood compatibility calculations for matching compatible blood groups
 
@@ -68,11 +68,11 @@ HemoLink helps bridge the gap between urgent blood needs and available donors by
 
 - Node.js
 - Express.js
-- MySQL 2
+- Mongoose
 - JWT
 - bcryptjs
 - multer
-- nodemailer
+- Brevo Transactional REST API v3
 - Cloudinary
 - dotenv
 
@@ -230,26 +230,26 @@ The frontend is organized by page type:
 
 ## Environment Configuration
 
-A backend environment file exists at [backend/.env](backend/.env). It contains the project configuration for the database, JWT secret, frontend URL, email, and Cloudinary.
+A template environment file exists at [backend/.env.example](backend/.env.example). Create `backend/.env` with your project configuration for MongoDB, JWT secret, frontend URL, Brevo email, and Cloudinary.
 
 Example configuration keys:
 
 ```env
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=root
-DB_PASS=none
-DB_NAME=hemolink
-JWT_SECRET=your_secret_key
-JWT_EXPIRES_IN=24h
 PORT=5000
 CLIENT_URL=http://localhost:5173
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_16_digit_app_password
+JWT_SECRET=your_secret_key
+JWT_EXPIRES_IN=24h
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/hemolink?retryWrites=true&w=majority
+
+# Brevo Email Credentials
+BREVO_API_KEY=
+SENDER_EMAIL=your_verified_sender@domain.com
+SENDER_NAME=HemoLink Blood Platform 🩸
+
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
-CLOUDINARY_FOLDER=Hemo_LInk
+CLOUDINARY_FOLDER=Hemo_Link
 ```
 
 > Important: Keep sensitive values private. Do not commit live secrets to version control.
@@ -262,8 +262,8 @@ Before running the project, make sure you have:
 
 - Node.js 18+ recommended
 - npm or yarn
-- MySQL server running locally
-- Email app password configured for Gmail SMTP if you want actual email alerts
+- MongoDB Atlas cluster or local MongoDB instance running
+- Brevo API key configured (`BREVO_API_KEY`) for transactional email delivery
 - Optional Cloudinary credentials for document uploads
 
 ---
@@ -392,14 +392,14 @@ The app includes logic to determine compatible donor groups based on blood type.
 
 ### Email Alert System
 
-The backend sends real-time notifications using Gmail SMTP through [backend/services/email.service.js](backend/services/email.service.js). This covers:
+The backend sends real-time transactional notifications using Brevo (Transactional REST API v3) through [backend/services/email.service.js](backend/services/email.service.js). This covers:
 
 - donation request alerts to eligible donors
 - donor response alerts to requesters
 - welcome emails
 - password reset verification emails
 
-If EMAIL_PASS is not configured, the service logs preview information instead of failing the request flow.
+If `BREVO_API_KEY` is not configured, the service logs preview information instead of failing the request flow.
 
 ### Document Uploads
 

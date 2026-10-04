@@ -1,50 +1,112 @@
 // services/email.service.js
-// Real-time email notification service using Nodemailer (Gmail SMTP)
+// Real-time email notification service using Brevo Transactional Email REST API v3
 
-const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Create reusable transporter object
-function createTransporter() {
-  const user = process.env.EMAIL_USER || 'karumanchisubhash484@gmail.com';
-  const pass = process.env.EMAIL_PASS;
-
-  if (!pass || pass === 'your_16_digit_app_password_here') {
-    return null; // Not fully configured yet
+/**
+ * Retrieves the Brevo API Key strictly from process.env.BREVO_API_KEY.
+ */
+function getBrevoApiKey() {
+  const key = process.env.BREVO_API_KEY;
+  if (!key || key === 'your_brevo_api_key_here') {
+    return null;
   }
-
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: user,
-      pass: pass.replace(/\s+/g, ''), // Strip spaces from Google 16-digit app password (e.g. abcd efgh ijkl mnop)
-    },
-  });
+  return key.trim();
 }
 
-// Helper to safely send email without breaking request flow
-async function sendMailSafely({ to, subject, html, text }) {
-  const senderEmail = process.env.EMAIL_USER || 'karumanchisubhash484@gmail.com';
-  const transporter = createTransporter();
+/**
+ * Retrieves the configured sender email strictly from process.env.SENDER_EMAIL.
+ */
+function getSenderEmail() {
+  const email = process.env.SENDER_EMAIL;
+  if (!email || email === 'your_verified_sender@domain.com') {
+    return null;
+  }
+  return email.toLowerCase().trim();
+}
 
-  if (!transporter) {
-    console.log(`[EMAIL NOTICE] Email to <${to}> skipped. To activate real-time sending, add your 16-digit Google App Password to EMAIL_PASS in backend/.env`);
+/**
+ * Retrieves the configured sender display name from process.env.SENDER_NAME.
+ */
+function getSenderName() {
+  return process.env.SENDER_NAME || 'HemoLink Blood Platform 🩸';
+}
+
+/**
+ * Retrieves the base frontend client URL from process.env.CLIENT_URL.
+ */
+function getClientUrl() {
+  return (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '');
+}
+
+/**
+ * Safely sends email via Brevo Transactional Email REST API v3.
+ * Prevents email errors from crashing HTTP request handlers.
+ */
+async function sendMailSafely({ to, subject, html, text }) {
+  if (!to) {
+    return { success: false, reason: 'No recipient email provided' };
+  }
+
+  const apiKey = getBrevoApiKey();
+  const senderEmail = getSenderEmail();
+  const senderName = getSenderName();
+
+  if (!apiKey) {
+    console.log(`[EMAIL NOTICE] Email to <${to}> skipped. BREVO_API_KEY is not configured.`);
     console.log(`[EMAIL PREVIEW] Subject: ${subject}`);
-    return { success: false, reason: 'EMAIL_PASS not configured' };
+    return { success: false, reason: 'BREVO_API_KEY not configured' };
+  }
+
+  if (!senderEmail) {
+    console.log(`[EMAIL NOTICE] Email to <${to}> skipped. SENDER_EMAIL is not configured.`);
+    console.log(`[EMAIL PREVIEW] Subject: ${subject}`);
+    return { success: false, reason: 'SENDER_EMAIL not configured' };
+  }
+
+  // Sanitize and format recipient(s)
+  const recipientList = (Array.isArray(to) ? to : String(to).split(','))
+    .map(e => e.trim())
+    .filter(Boolean);
+
+  if (recipientList.length === 0) {
+    return { success: false, reason: 'No valid recipient email address' };
   }
 
   try {
-    const info = await transporter.sendMail({
-      from: `"HemoLink Blood Platform 🩸" <${senderEmail}>`,
-      to,
-      subject,
-      text: text || subject,
-      html,
+    const brevoPayload = {
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: recipientList.map(email => ({ email })),
+      subject: subject,
+      htmlContent: html,
+      textContent: text || subject,
+    };
+
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify(brevoPayload),
     });
-    console.log(`✅ [EMAIL SENT] Message ID: ${info.messageId} to ${to}`);
-    return { success: true, messageId: info.messageId };
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok && (data.messageId || data.messageIds)) {
+      const messageId = data.messageId || (data.messageIds && data.messageIds[0]);
+      console.log(`✅ [BREVO SENT] Message ID: ${messageId} to ${recipientList.join(', ')}`);
+      return { success: true, messageId };
+    }
+
+    console.error(`❌ [BREVO API ERROR] HTTP ${response.status}: ${data.message || JSON.stringify(data)}`);
+    return { success: false, error: data.message || `Brevo API error (HTTP ${response.status})` };
   } catch (err) {
-    console.error(`❌ [EMAIL ERROR] Failed sending to ${to}:`, err.message);
+    console.error(`❌ [BREVO NETWORK ERROR] Failed sending to ${recipientList.join(', ')}:`, err.message);
     return { success: false, error: err.message };
   }
 }
@@ -68,7 +130,10 @@ async function sendBloodRequestAlert({
     return { success: false, reason: 'No recipient email provided' };
   }
 
-  const senderEmail = (process.env.EMAIL_USER || 'karumanchisubhash484@gmail.com').toLowerCase().trim();
+  const senderEmail = getSenderEmail();
+  if (!senderEmail) {
+    return { success: false, reason: 'SENDER_EMAIL not configured' };
+  }
 
   // If multiple emails are passed (array or comma-separated string), dispatch individually
   const emailList = (Array.isArray(recipientEmail) ? recipientEmail : String(recipientEmail).split(','))
@@ -105,7 +170,8 @@ async function sendBloodRequestAlert({
   const urgencyBadgeColor =
     urgency === 'Critical' ? '#dc2626' : urgency === 'High' ? '#ea580c' : '#d97706';
 
-  const finalActionUrl = actionUrl || 'http://localhost:5173/donor/dashboard';
+  const clientUrl = getClientUrl();
+  const finalActionUrl = actionUrl || `${clientUrl}/donor/dashboard`;
 
   const html = `
     <!DOCTYPE html>
@@ -212,7 +278,7 @@ async function sendDonorResponseAlert({
     return { success: false, reason: 'No receiver email provided' };
   }
   const recipients = receiverEmail;
-  const clientUrl  = process.env.CLIENT_URL || 'http://localhost:5173';
+  const clientUrl = getClientUrl();
 
   const cleanPhone = donorPhone ? donorPhone.replace(/\D/g, '') : '';
 
@@ -322,6 +388,7 @@ async function sendWelcomeEmail({ name, email, role }) {
     return { success: false, reason: 'No email provided for welcome email' };
   }
   const recipients = email;
+  const clientUrl = getClientUrl();
 
   const html = `
     <!DOCTYPE html>
@@ -343,7 +410,7 @@ async function sendWelcomeEmail({ name, email, role }) {
             Please log in and complete your profile details to ensure full real-time matching.
           </p>
           <div style="text-align: center; margin-top: 20px;">
-            <a href="http://localhost:5173/login" style="background: #dc2626; color: #fff; padding: 11px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block;">
+            <a href="${clientUrl}/login" style="background: #dc2626; color: #fff; padding: 11px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block;">
               Go to HemoLink
             </a>
           </div>
@@ -368,7 +435,8 @@ async function sendPasswordResetEmail({ email, userName, resetCode }) {
     return { success: false, reason: 'No email provided for password reset' };
   }
   const recipients = email;
-  const directLink = `http://localhost:5173/reset-password?code=${resetCode}&email=${encodeURIComponent(email)}`;
+  const clientUrl = getClientUrl();
+  const directLink = `${clientUrl}/reset-password?code=${resetCode}&email=${encodeURIComponent(email)}`;
 
   const html = `
     <!DOCTYPE html>
@@ -457,7 +525,7 @@ async function sendDirectMessageToDonor({
     return { success: false, reason: 'No donor email provided' };
   }
   const recipients = donorEmail;
-  const clientUrl  = process.env.CLIENT_URL || 'http://localhost:5173';
+  const clientUrl = getClientUrl();
   const finalActionUrl = actionUrl || (requestId ? `${clientUrl}/request/${requestId}?action=review` : `${clientUrl}/donor/requests`);
 
   const html = `
@@ -557,10 +625,10 @@ async function sendDirectMessageToDonor({
 }
 
 module.exports = {
+  sendMailSafely,
   sendBloodRequestAlert,
   sendDonorResponseAlert,
   sendWelcomeEmail,
   sendPasswordResetEmail,
   sendDirectMessageToDonor,
 };
-
