@@ -49,9 +49,9 @@
   color: #f87171;
 }
 .dl-logo-img {
-  height: 24px;
+  height: 28px;
   width: auto;
-  max-width: 28px;
+  max-width: 32px;
   object-fit: contain;
   flex-shrink: 0;
 }
