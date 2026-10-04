@@ -280,7 +280,9 @@ exports.getMe = async (req, res) => {
 // ════════════════════════════════════════════════════════════
 exports.testEmail = async (req, res) => {
   const { targetEmail } = req.body;
-  const recipient = targetEmail || process.env.ALERT_RECIPIENT_EMAIL || 'karumanchisubhash484@gmail.com';
+  if (!targetEmail) {
+    return res.status(400).json({ message: 'targetEmail is required in request body.' });
+  }
 
   const result = await sendBloodRequestAlert({
     bloodGroup: 'O-',
@@ -290,18 +292,17 @@ exports.testEmail = async (req, res) => {
     unitsNeeded: 2,
     additionalNote: 'Test Real-Time Notification from HemoLink platform!',
     receiverName: 'HemoLink System Test',
-    recipientEmail: recipient,
+    recipientEmail: targetEmail.trim(),
   });
 
   if (result.success) {
     return res.status(200).json({
-      message: `✅ Test email successfully sent to ${recipient}!`,
+      message: `✅ Test email successfully sent to ${targetEmail}!`,
       messageId: result.messageId,
     });
   } else {
-    return res.status(200).json({
-      message: `⚠️ Email not delivered: ${result.reason || result.error}. Please check EMAIL_PASS in backend/.env`,
-      details: result,
+    return res.status(500).json({
+      message: '⚠️ Unable to send email. Please verify server email configuration.',
     });
   }
 };
