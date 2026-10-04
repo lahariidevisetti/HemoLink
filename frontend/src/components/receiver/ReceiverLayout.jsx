@@ -28,7 +28,7 @@ export default function ReceiverLayout({ children }) {
       <aside className={`rl-sidebar ${sidebarOpen ? 'rl-sidebar--open' : ''}`}>
         <div className="rl-brand">
           <div className="rl-logo">
-            <span>🩸</span>
+            <img src="/logo-icon.png" alt="HemoLink" className="rl-logo-img" />
             <span>Hemo<span className="rl-logo-accent">Link</span></span>
           </div>
           <span className="rl-role-badge">Receiver</span>
